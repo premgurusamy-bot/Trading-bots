@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Options Desk</string>
+    <string name="title_activity_main">Options Desk</string>
+    <string name="package_name">in.optionsdesk.app</string>
+    <string name="custom_url_scheme">in.optionsdesk.app</string>
+</resources>

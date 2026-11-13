@@ -79,7 +79,7 @@ export default function Dashboard() {
           <Kv k="Blocked" v={data.risk.blocked_reason || "no"} />
         </Card>
       </div>
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid min-w-0 gap-3 lg:grid-cols-2">
         {Object.entries(data.indices).map(([k, v]) => <IndexCard key={k} name={k} d={v} />)}
       </div>
     </div>

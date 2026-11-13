@@ -90,6 +90,7 @@ export function ScoreBreakdown({ score }: { score: any }) {
         <span className="muted">/ 100</span>
         <Badge tone={stateTone(score.band)}>{score.band}</Badge>
       </div>
+      <div className="overflow-x-auto">
       <table className="tbl">
         <thead>
           <tr>
@@ -101,7 +102,7 @@ export function ScoreBreakdown({ score }: { score: any }) {
         <tbody>
           {score.components.map((c: any) => (
             <tr key={c.key}>
-              <td className="whitespace-nowrap">
+              <td className="min-w-[7rem]">
                 {c.name} {!c.data_ok && <Badge tone="amber">data</Badge>}
               </td>
               <td className="text-right tabular-nums">
@@ -112,6 +113,7 @@ export function ScoreBreakdown({ score }: { score: any }) {
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

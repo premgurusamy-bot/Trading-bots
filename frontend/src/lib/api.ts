@@ -1,3 +1,5 @@
+import { serverBase } from "./platform";
+
 // API client. Holds ONLY the dashboard session token (sessionStorage). Dhan credentials never reach the browser.
 const TOKEN_KEY = "desk_session";
 
@@ -36,7 +38,14 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   const tok = getToken();
   if (tok) headers.Authorization = `Bearer ${tok}`;
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
-  const r = await fetch(path, { method: opts.method || "GET", headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+  let r: Response;
+  try {
+    r = await fetch(serverBase() + path, { method: opts.method || "GET", headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+  } catch {
+    throw new ApiError(0, serverBase()
+      ? `Cannot reach your PC at ${serverBase()}. Is start-mobile.bat running, and is the phone on the same Wi-Fi (or Tailscale on)?`
+      : "Cannot reach the server.");
+  }
   if (r.status === 401 && !path.startsWith("/api/auth")) {
     setToken(null);
     onUnauthorized();
@@ -70,8 +79,10 @@ export function connectEvents(onEvent: (e: WsEvent) => void, onState: (s: "open"
   const open = () => {
     const tok = getToken();
     if (!tok || stopped) return;
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(tok)}`);
+    const base = serverBase();
+    const origin = base ? new URL(base) : new URL(location.href);
+    const proto = origin.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${origin.host}/ws?token=${encodeURIComponent(tok)}`);
     ws.onopen = () => {
       backoff = 1000;
       onState("open");

@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -44,6 +45,9 @@ def setup_logging():
     logging.getLogger("httpx").setLevel(logging.WARNING)   # httpx INFO lines include URLs
 
 
+MOBILE_APP_ORIGINS = ("http://localhost", "https://localhost", "capacitor://localhost")
+
+
 def create_app(database_url: str | None = None, start_feed: bool = True, start_loop: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -59,6 +63,10 @@ def create_app(database_url: str | None = None, start_feed: bool = True, start_l
     app = FastAPI(title="NIFTY/BANKNIFTY Options Trader", version=APP_VERSION, lifespan=lifespan,
                   docs_url=None, redoc_url=None)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+    # The Android app (Capacitor WebView) runs at origin http://localhost and calls this API on the PC.
+    # Only those app origins are allowed; every call still needs the dashboard login token (no cookies used).
+    app.add_middleware(CORSMiddleware, allow_origins=list(MOBILE_APP_ORIGINS), allow_credentials=False,
+                       allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Authorization", "Content-Type"])
     app.include_router(routes.router)
 
     @app.middleware("http")

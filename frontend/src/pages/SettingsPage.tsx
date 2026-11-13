@@ -2,6 +2,27 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { Badge, Card, ConfirmButton, ErrorBox, Kv, Loading, usePoll } from "../components/ui";
 import { dt, inr } from "../lib/format";
+import { isNative, notificationsEnabled, notify, setNotificationsEnabled } from "../lib/platform";
+
+function Notifications() {
+  const [on, setOn] = useState(notificationsEnabled());
+  return (
+    <Card title="Notifications">
+      {isNative() ? (
+        <div className="space-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="h-5 w-5" checked={on} onChange={(e) => { setNotificationsEnabled(e.target.checked); setOn(e.target.checked); }} />
+            Phone notifications for signals, trades, confirmations and system faults
+          </label>
+          <button className="btn-ghost" onClick={() => notify("Options Desk", "Test notification")}>Send test notification</button>
+          <p className="muted text-xs">Delivered while the app is open or recently in the background. Android may pause the app later, so these alerts are not guaranteed. The engine on your PC keeps running and managing positions either way. Always confirm in the Dhan app.</p>
+        </div>
+      ) : (
+        <p className="muted text-sm">In-app alerts appear while the dashboard is open. Install the Android app for phone notifications.</p>
+      )}
+    </Card>
+  );
+}
 
 function Credentials() {
   const st = usePoll<any>("/api/credentials", 15000);
@@ -180,9 +201,7 @@ export default function SettingsPage() {
       <SecureExit s={data} reload={reload} />
       <Paper s={data} reload={reload} />
       <div className="lg:col-span-2"><Charges s={data} reload={reload} /></div>
-      <Card title="Notifications">
-        <p className="muted text-sm">In-app alerts appear for signals, trades, confirmations and system faults while the dashboard is open. Push notifications are not enabled because they can't be guaranteed reliable on all devices. Always confirm in the Dhan app.</p>
-      </Card>
+      <Notifications />
     </div>
   );
 }

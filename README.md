@@ -44,17 +44,16 @@ Dhan tokens expire (usually daily). The dashboard shows **"token invalid or expi
 Generate a new token on web.dhan.co and paste it in Settings → Dhan credentials. The feed reconnects, and entries
 resume only after fresh data has been validated. Health shows the token's expiry time.
 
-## 4. Using it from an Android phone (PWA)
+## 4. Android app (recommended way to use it on the phone)
 
-1. On the PC, edit `.env`: set `APP_HOST=0.0.0.0`, then restart with `start.bat`. Allow Python on **Private networks**
-   when Windows Firewall asks.
-2. Find the PC's IP (`ipconfig` → IPv4, e.g. 192.168.1.20). On the phone, using the same Wi-Fi, open
-   `http://192.168.1.20:8000` in Chrome and log in.
-3. Chrome menu ⋮ → **Add to Home screen / Install app**. It opens full-screen like an app.
-   (Chrome allows full "install" only on HTTPS or localhost; over plain LAN HTTP you get a home-screen shortcut, which
-   works the same way.)
-4. **Never port-forward this to the internet.** For remote access use a private VPN such as Tailscale (free tier) and
-   connect over its HTTPS name. The service worker caches only the app shell and never market data.
+The phone app is an installable **APK**. The trading engine keeps running on your PC, and the app is its remote screen.
+Full guide: **docs/ANDROID_APP.md**. Short version:
+1. GitHub → **Actions → Android APK** → latest run → download **OptionsDesk-android-apk** → install the APK on the phone.
+2. On the PC, run **`start-mobile.bat`**. It prints an address such as `192.168.1.20:8000`.
+3. In the app: **Connect to your PC** → enter that address → log in.
+4. Away from home: install **Tailscale** (free) on both PC and phone and use the `100.x.x.x` address. Never port-forward.
+
+(The browser version still works: open `http://<PC-IP>:8000` in Chrome on the phone while start-mobile.bat runs.)
 
 ## 5. Screens
 
@@ -103,7 +102,8 @@ reconcile. The kill switch blocks entries and sends exits. Live mode cannot be a
 
 ## 9. Project layout
 ```
-setup.bat start.bat stop.bat update.bat backup.bat .env.example
+setup.bat start.bat start-mobile.bat stop.bat update.bat backup.bat .env.example
+.github/workflows/android-apk.yml   builds the Android APK
 backend/
   app/strategy/   indicators, candles, structure, levels, patterns, optionchain, greeks, selection,
                   scoring, setups, signals, freshness, engine, params (V1.0)
@@ -114,7 +114,7 @@ backend/
   app/backtest/   sim, runner, metrics
   app/api/        auth, routes          app/main.py  app/runtime.py  app/db.py
   alembic/        migrations            tests/  (pytest, synthetic fixtures)
-frontend/         React + TypeScript + Vite + Tailwind PWA
+frontend/         React + TypeScript + Vite + Tailwind PWA; frontend/android = Capacitor Android app
 pine/             Pine Script v6 technical companion
 docs/             AUDIT, STRATEGY_V1, PATTERNS, SECURE_EXIT, DHAN_INTEGRATION, CHARGES,
                   PAPER_TRADING, BACKTESTING, TROUBLESHOOTING, TEST_REPORT

@@ -155,3 +155,12 @@ def test_metrics_basic_and_small_sample_flag():
     o = m["overall"]
     assert o["trades"] == 4 and o["win_rate"] == 50.0 and o["profit_factor"] == 3.0 and o["expectancy"] == 50.0
     assert o["max_drawdown"] == 50 and not o["sample_adequate"] and "warning" in m
+
+
+def test_cors_allows_android_app_origin_only(client):
+    ok = client.options("/api/health", headers={"Origin": "http://localhost", "Access-Control-Request-Method": "GET",
+                                               "Access-Control-Request-Headers": "authorization"})
+    assert ok.headers.get("access-control-allow-origin") == "http://localhost"
+    bad = client.options("/api/health", headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"})
+    assert "access-control-allow-origin" not in bad.headers
+    assert client.get("/api/dashboard", headers={"Origin": "http://localhost"}).status_code == 401   # still needs login
