@@ -99,7 +99,10 @@ def snapshot_hash(snap: dict) -> str:
     return hashlib.sha256(json.dumps(snap, sort_keys=True, default=str).encode()).hexdigest()[:20]
 
 
-def evaluate(ctx: MarketContext, p: StrategyParams) -> EvalResult:
+def evaluate(ctx: MarketContext, p: StrategyParams, technical_only: bool = False) -> EvalResult:
+    """technical_only=True is ONLY for backtests without genuine historical option-chain data: the
+    derivatives/option/premium mandatory checks and the 75-point gate are marked NOT_EVALUATED (they are
+    not passed), and the result is a technical candidate, never a tradeable signal."""
     c5_all = [c for c in ctx.c5 if c.complete]
     c5 = c5_all[-HISTORY_BARS_5M:]
     c15 = [c for c in ctx.c15 if c.complete][-HISTORY_BARS_15M:]
@@ -210,7 +213,10 @@ def evaluate(ctx: MarketContext, p: StrategyParams) -> EvalResult:
         "reward_risk_to_next_sr": plan.rr_ok,
         "premium_plan_available": prem is not None,
     }
-    failed = [k for k, v in mandatory.items() if not v]
+    if technical_only:
+        for k in ("derivatives_confirmation", "option_quality", "premium_plan_available", "min_score", "data_quality"):
+            mandatory[k] = "NOT_EVALUATED"
+    failed = [k for k, v in mandatory.items() if v is False]
     cand = {
         "direction": D, "setup": setup, "plan": plan.to_dict(), "score": sc.to_dict(), "mandatory": mandatory,
         "failed": failed, "zone": zone.to_dict() if zone else None,
@@ -221,6 +227,10 @@ def evaluate(ctx: MarketContext, p: StrategyParams) -> EvalResult:
     res.candidate = cand
     snap_ref = snapshot_hash(snapshot)
     snapshot["ref"] = snap_ref
+    if technical_only:
+        res.candidate["technical_only"] = True
+        res.messages.append("technical-only evaluation: " + ("candidate" if not failed else f"rejected {failed}"))
+        return res
     if failed:
         res.rejected = {"id": signal_id(ctx.index, setup or "-", D, conf.ts), "at": ctx.now.isoformat(),
                         "reasons": failed, "score": sc.total, "candidate": cand, "snapshot_ref": snap_ref}

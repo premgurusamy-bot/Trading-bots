@@ -372,6 +372,9 @@ class TradingService:
                                  "risk_gate": ctx.risk_gate, "evaluated_at": now.isoformat()}
         if res.signal is not None:
             if self.book.add(res.signal):
+                sec = (res.signal.option or {}).get("security_id")
+                if sec and hasattr(self.provider, "watch_option"):
+                    self.provider.watch_option(sec)
                 self._save_snapshot(res, res.signal.snapshot_ref)
                 self._save_signal(res.signal)
                 self.emit("signal", res.signal.to_dict())
@@ -481,7 +484,10 @@ class TradingService:
         es = ExitPlanState(direction=sig.direction, entry_underlying=sig.plan["trigger"], stop=sig.plan["stop"],
                            initial_stop=sig.plan["stop"], t1=sig.plan["t1"], t2=sig.plan["t2"], t3=sig.plan["t3"],
                            premium_sl=prem["premium_sl"], qty_total=summary["qty"], qty_open=0, lot_size=summary["lot_size"])
-        cap = self.broker.available_balance() or self.paper_capital
+        try:
+            cap = self._active_broker().available_balance() or self.paper_capital
+        except RuntimeError:
+            cap = self.paper_capital
         t = TradeRuntime(id=tid, signal_id=sig.id, index=sig.index, mode=self.mode, direction=sig.direction, setup=sig.setup,
                          option={**sig.option, "trading_symbol": summary["trading_symbol"], "expiry": summary["expiry"],
                                  "security_id": summary["security_id"]},
