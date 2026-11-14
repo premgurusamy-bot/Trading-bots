@@ -12,7 +12,7 @@ buying, using Dhan market data. It implements the frozen **Strategy V1.0** (docs
 
 ## 1. Install on Windows (one time)
 
-1. Install **Python 3.11 or newer** from <https://www.python.org/downloads/>. On the first installer screen tick
+1. Install **Python 3.11–3.14** (3.13 or 3.14 recommended) from <https://www.python.org/downloads/>. On the first installer screen tick
    **"Add python.exe to PATH"**.
 2. Install **Node.js LTS** from <https://nodejs.org/>.
 3. Download this project (green **Code → Download ZIP** on GitHub, then unzip; or `git clone`).
