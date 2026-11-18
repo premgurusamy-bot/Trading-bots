@@ -18,11 +18,7 @@ import re
 import traceback
 from datetime import datetime, timedelta
 
-from . import db
-
-MODEL = os.environ.get("AI_MODEL", "claude-opus-5-5")
-EFFORT = os.environ.get("AI_EFFORT", "medium")
-MAX_STEPS = int(os.environ.get("AI_MAX_STEPS", "10"))
+from . import db, llm
 
 ROLES: dict[str, dict] = {
     "general_manager": {
@@ -267,8 +263,9 @@ def rules_social_media_manager(by):
     acts = []
     for c in db.q("SELECT * FROM content WHERE status='approved' AND (scheduled_for IS NULL OR scheduled_for <= ?)", (db.now(),)):
         text = (c["body"] or "") + (("\n\n" + c["hashtags"]) if c["hashtags"] else "")
-        if c["design_id"]:
-            text += f"\n\n[image: design #{c['design_id']} - {_base_url()}/api/designs/{c['design_id']}.svg]"
+        d = db.get("designs", c["design_id"]) if c["design_id"] else None
+        if d:
+            text += f"\n\n[image: {_base_url()}/api/designs/{d['id']}.{'png' if d.get('image_path') else 'svg'}]"
         _outbox(c["platform"] or "facebook", c["platform"] or "", c["title"] or "", text, by, f"content:{c['id']}")
         db.q("UPDATE outbox SET status='approved' WHERE ref=? AND status='pending_approval'", (f"content:{c['id']}",))  # content already approved
         db.update("content", c["id"], {"status": "published", "published_at": db.now()})
@@ -318,7 +315,7 @@ RULES = {k: globals()[f"rules_{k}"] for k in ROLES}
 
 
 def _base_url() -> str:
-    return f"http://127.0.0.1:{os.environ.get('APP_PORT', '8100')}"
+    return (os.environ.get("PUBLIC_URL") or f"http://127.0.0.1:{os.environ.get('APP_PORT', '8100')}").rstrip("/")
 
 
 # ----------------------------------------------------------------------------- AI tools
@@ -373,6 +370,12 @@ TOOL_DEFS = {
     "save_design": {
         "description": "Save an SVG graphic (complete <svg> document with viewBox; no scripts, no external images). Optionally attach to a content item.",
         "input_schema": _obj({"name": S, "kind": {"type": "string", "enum": ["social_post", "banner", "logo", "flyer", "other"]}, "svg": S, "content_id": I}, ["name", "kind", "svg"]),
+    },
+    "generate_image": {
+        "description": "Create a photo-quality image with ChatGPT's image model (PNG). Describe the scene, style, colours and any short "
+                       "text to show. Saved as a design; optionally attached to a content item. Use for posts and ads that need a picture.",
+        "input_schema": _obj({"name": S, "prompt": S, "kind": {"type": "string", "enum": ["social_post", "banner", "flyer", "other"]},
+                              "size": {"type": "string", "enum": ["1024x1024", "1536x1024", "1024x1536"]}, "content_id": I}, ["name", "prompt"]),
     },
     "update_website": {
         "description": "Create or replace a website section (served at /site). key e.g. hero, about, services, fleet, why_us, testimonials, contact. "
@@ -457,6 +460,13 @@ def run_tool(role: str, name: str, a: dict) -> object:
         if a.get("content_id") and db.get("content", a["content_id"]):
             db.update("content", a["content_id"], {"design_id": did})
         return {"design_id": did}
+    if name == "generate_image":
+        png = llm.generate_image(a["prompt"], a.get("size") or "1024x1024")
+        did = db.insert("designs", {"name": a["name"], "kind": a.get("kind") or "social_post", "prompt": a["prompt"], "created_by": by})
+        db.update("designs", did, {"image_path": save_png(did, png)})
+        if a.get("content_id") and db.get("content", a["content_id"]):
+            db.update("content", a["content_id"], {"design_id": did})
+        return {"design_id": did}
     if name == "update_website":
         html = sanitize_html(a["html"])
         row = db.q1("SELECT id FROM website_sections WHERE key = ?", (a["key"],))
@@ -472,13 +482,25 @@ def run_tool(role: str, name: str, a: dict) -> object:
     raise ValueError(f"unknown tool {name}")
 
 
+DESIGN_DIR = db.DB_PATH.parent / "designs"
+
+
+def save_png(design_id: int, png: bytes) -> str:
+    DESIGN_DIR.mkdir(parents=True, exist_ok=True)
+    path = DESIGN_DIR / f"{design_id}.png"
+    path.write_bytes(png)
+    return str(path)
+
+
 def tools_for(role: str) -> list[dict]:
-    names = list(dict.fromkeys(ROLES[role]["tools"] + ["complete_task", "create_task"]))
-    return [{"name": n, **TOOL_DEFS[n]} for n in names]
+    names = ROLES[role]["tools"] + ["complete_task", "create_task"]
+    if role in ("designer", "social_media_manager", "content_creator") and llm.available()["openai"]:
+        names.append("generate_image")
+    return [{"name": n, **TOOL_DEFS[n]} for n in dict.fromkeys(names)]
 
 
 def ai_available() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return llm.resolve(None) is not None
 
 
 def system_prompt(role: str) -> str:
@@ -501,10 +523,7 @@ def system_prompt(role: str) -> str:
     )
 
 
-def run_ai(role: str, rule_actions: list[str]) -> tuple[str, list[str], int, int]:
-    import anthropic
-
-    client = anthropic.Anthropic()
+def run_ai(role: str, rule_actions: list[str], provider: str) -> tuple[str, list[str], int, int]:
     my_tasks = db.q("SELECT id, title, details, priority, created_by FROM tasks WHERE assigned_role=? AND status IN ('open','in_progress') ORDER BY id LIMIT 15", (role,))
     content = (
         f"Now: {db.now()}. Your scheduled run has started.\n"
@@ -512,40 +531,27 @@ def run_ai(role: str, rule_actions: list[str]) -> tuple[str, list[str], int, int
         f"Your open tasks: {json.dumps(my_tasks, default=str) if my_tasks else 'none'}\n"
         f"KPIs: {json.dumps(kpis())}"
     )
-    messages: list = [{"role": "user", "content": content}]
-    actions, tin, tout, summary = [], 0, 0, ""
-    tools = tools_for(role)
-    system = [{"type": "text", "text": system_prompt(role), "cache_control": {"type": "ephemeral"}}]
-    for _ in range(MAX_STEPS):
-        resp = client.beta.messages.create(
-            model=MODEL, max_tokens=16000, system=system, tools=tools, messages=messages,
-            output_config={"effort": EFFORT},
-            betas=["server-side-fallback-2026-07-01"], fallbacks="default",
-        )
-        tin += resp.usage.input_tokens or 0
-        tout += resp.usage.output_tokens or 0
-        if resp.stop_reason == "refusal":
-            summary = "The model declined this run."
-            break
-        messages.append({"role": "assistant", "content": resp.content})
-        text = "\n".join(b.text for b in resp.content if b.type == "text").strip()
-        if text:
-            summary = text
-        calls = [b for b in resp.content if b.type == "tool_use"]
-        if resp.stop_reason != "tool_use" or not calls:
-            break
-        results = []
-        for call in calls:
-            try:
-                out = run_tool(role, call.name, dict(call.input or {}))
-                actions.append(f"{call.name}: {json.dumps(call.input, default=str)[:300]}")
-                results.append({"type": "tool_result", "tool_use_id": call.id, "content": json.dumps(out, default=str)[:20000]})
-            except Exception as e:  # tool errors go back to the model so it can correct itself
-                results.append({"type": "tool_result", "tool_use_id": call.id, "content": f"Error: {e}", "is_error": True})
-        messages.append({"role": "user", "content": results})
-    else:
-        summary = (summary + "\n(stopped: step limit reached)").strip()
-    return summary, actions, tin, tout
+    return llm.run_loop(provider, system_prompt(role), [{"role": "user", "content": content}], tools_for(role),
+                        lambda name, args: run_tool(role, name, args))
+
+
+def chat(role: str, messages: list[dict], provider_pref: str | None = None) -> dict:
+    """The owner talks to one AI role. That role can look up data and act with its tools."""
+    if role not in ROLES:
+        raise ValueError("unknown role")
+    provider = llm.resolve(provider_pref)
+    if not provider:
+        raise RuntimeError("No AI key configured. Add ANTHROPIC_API_KEY or OPENAI_API_KEY to .env")
+    msgs = [{"role": m["role"], "content": str(m["content"])[:8000]} for m in messages if m.get("role") in ("user", "assistant") and m.get("content")][-20:]
+    if not msgs or msgs[-1]["role"] != "user":
+        raise ValueError("last message must be from the user")
+    system = system_prompt(role) + (
+        "\n\nYou are now chatting live with the owner on their phone. Answer briefly and clearly, using real ERP data. "
+        "If they ask you to do something, do it with your tools and confirm what changed.")
+    reply, actions, tin, tout = llm.run_loop(provider, system, msgs, tools_for(role), lambda n, a: run_tool(role, n, a))
+    db.execute("INSERT INTO agent_runs (agent_key, started_at, finished_at, mode, status, summary, actions, tokens_in, tokens_out) VALUES (?,?,?,?,?,?,?,?,?)",
+               (role, db.now(), db.now(), f"chat:{provider}", "ok", f"Owner: {msgs[-1]['content'][:200]}\n\n{reply}", json.dumps(actions), tin, tout))
+    return {"reply": reply, "actions": actions, "provider": provider, "model": llm.model_name(provider)}
 
 
 # ----------------------------------------------------------------------------- runner
@@ -568,9 +574,10 @@ def run_agent(role: str, use_ai: bool | None = None) -> dict:
     try:
         actions = RULES[role](role)
         summary = "; ".join(actions) or "Nothing to do."
-        if (ai_available() if use_ai is None else use_ai):
-            mode = "ai"
-            summary, ai_actions, tin, tout = run_ai(role, actions)
+        provider = llm.resolve(agent.get("provider")) if use_ai is not False else None
+        if provider:
+            mode = f"ai:{provider}"
+            summary, ai_actions, tin, tout = run_ai(role, actions, provider)
             actions += ai_actions
     except Exception as e:
         status, summary = "error", f"{type(e).__name__}: {e}"

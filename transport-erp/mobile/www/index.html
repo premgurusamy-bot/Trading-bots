@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Transport ERP</title>
+<style>
+:root{--bg:#0f3d6e;--card:#fff;--ink:#1c2333;--muted:#667085;--accent:#f28c28}
+@media (prefers-color-scheme:dark){:root{--card:#171e29;--ink:#e6eaf2;--muted:#9aa4b5}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);font:16px/1.5 system-ui,-apple-system,Roboto,sans-serif;color:var(--ink);padding:20px}
+.card{background:var(--card);border-radius:20px;padding:24px;width:min(420px,100%)}
+h1{margin:0 0 4px;font-size:22px}p{margin:6px 0;color:var(--muted);font-size:14px}
+input{width:100%;font:inherit;padding:12px;border:1px solid #c8cfdb;border-radius:12px;margin:14px 0 10px;background:transparent;color:var(--ink)}
+button{width:100%;font:inherit;font-weight:600;padding:13px;border:0;border-radius:12px;background:var(--accent);color:#fff}
+.err{color:#c53030;font-size:14px;min-height:20px}
+.logo{font-size:44px}
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="logo">🚚</div>
+  <h1>Transport ERP</h1>
+  <p id="status">Connecting…</p>
+</div>
+<script>
+const card = document.getElementById("card");
+const KEY = "erp_server";
+
+function normalise(v) {
+  v = (v || "").trim().replace(/\/+$/, "");
+  if (!v) return "";
+  if (!/^https?:\/\//i.test(v)) v = "http://" + v;
+  return v;
+}
+
+async function reachable(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    await fetch(url + "/api/ping", { mode: "no-cors", signal: ctrl.signal, cache: "no-store" });
+    return true;
+  } catch (e) {
+    return false;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function showForm(message) {
+  const saved = localStorage.getItem(KEY) || "";
+  card.innerHTML = `
+    <div class="logo">🚚</div>
+    <h1>Connect to your ERP</h1>
+    <p>Type the address shown by <b>start-mobile.bat</b> on your PC (for example <b>192.168.1.20:8100</b>),
+       your Tailscale address (<b>100.x.x.x:8100</b>), or your cloud address (<b>https://erp.yourcompany.com</b>).</p>
+    <input id="addr" inputmode="url" autocapitalize="off" autocorrect="off" placeholder="192.168.1.20:8100" value="${saved.replace(/"/g, "&quot;")}">
+    <div class="err" id="err">${message || ""}</div>
+    <button id="go">Connect</button>`;
+  const addr = document.getElementById("addr");
+  document.getElementById("go").onclick = () => connect(addr.value);
+  addr.onkeydown = (e) => { if (e.key === "Enter") connect(addr.value); };
+}
+
+async function connect(value) {
+  const url = normalise(value);
+  const err = document.getElementById("err");
+  if (!url) { err.textContent = "Please type the address."; return; }
+  err.textContent = "Checking…";
+  if (await reachable(url)) {
+    localStorage.setItem(KEY, url);
+    location.href = url + "/#dashboard";
+  } else {
+    err.textContent = "Cannot reach " + url + ". Is start-mobile.bat running, and is the phone on the same Wi-Fi (or Tailscale)?";
+  }
+}
+
+(async () => {
+  const change = new URLSearchParams(location.search).has("change");
+  const saved = localStorage.getItem(KEY);
+  if (!saved || change) return showForm();
+  document.getElementById("status").textContent = "Connecting to " + saved + "…";
+  if (await reachable(saved)) location.href = saved + "/#dashboard";
+  else showForm("Cannot reach " + saved + " right now. Check that the ERP is running, or change the address.");
+})();
+</script>
+</body>
+</html>

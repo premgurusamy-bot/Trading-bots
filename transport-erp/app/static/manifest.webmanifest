@@ -1,0 +1,14 @@
+{
+  "name": "Transport ERP",
+  "short_name": "Transport ERP",
+  "description": "Transport ERP with an automatic AI team",
+  "start_url": "/#dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f3d6e",
+  "theme_color": "#0f3d6e",
+  "icons": [
+    {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}

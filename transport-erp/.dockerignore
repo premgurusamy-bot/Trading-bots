@@ -1,0 +1,6 @@
+.env
+.venv
+data
+mobile
+tests
+__pycache__

@@ -95,7 +95,8 @@ TABLES: dict[str, dict] = {
         "label": "Designs",
         "cols": {
             "name": ("text", None), "kind": ("select", ["social_post", "banner", "logo", "flyer", "other"]),
-            "svg": ("longtext", None), "created_by": ("text", None),
+            "svg": ("longtext", None), "image_path": ("text", None), "prompt": ("longtext", None),
+            "canva_design_id": ("text", None), "canva_edit_url": ("text", None), "created_by": ("text", None),
         },
     },
     "website_sections": {
@@ -152,6 +153,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, agent_key TEXT, started_at TEXT, finished_at TEXT,
   mode TEXT, status TEXT, summary TEXT, actions TEXT, tokens_in INTEGER DEFAULT 0, tokens_out INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS integrations (name TEXT PRIMARY KEY, data TEXT, updated_at TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_alert_dedupe ON alerts(dedupe_key) WHERE dedupe_key IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_site_key ON website_sections(key);
 """
@@ -250,6 +252,8 @@ def init_db() -> None:
                 if col not in existing:
                     c.execute(f"ALTER TABLE {name} ADD COLUMN {col} {SQL_TYPES.get(t, 'TEXT')}")
         c.executescript(EXTRA_SQL)
+        if "provider" not in {r[1] for r in c.execute("PRAGMA table_info(agents)")}:
+            c.execute("ALTER TABLE agents ADD COLUMN provider TEXT DEFAULT 'auto'")
         if not c.execute("SELECT 1 FROM company").fetchone():
             c.execute(
                 "INSERT INTO company (id, name, tagline, phone, email, address, city, services, about) VALUES (1,?,?,?,?,?,?,?,?)",
@@ -282,3 +286,18 @@ def seed_demo() -> None:
     insert("expenses", {"date": days_from_today(-6), "category": "toll", "amount": 1450, "vehicle_id": v1, "trip_id": t1})
     insert("invoices", {"number": "INV-0001", "customer_id": c2, "amount": 20000, "tax": 1000, "total": 21000, "issue_date": days_from_today(-40), "due_date": days_from_today(-25), "status": "unpaid"})
     insert("leads", {"name": "Karthik", "company": "Fresh Farms Pvt Ltd", "phone": "9000000099", "email": "karthik@freshfarms.example", "source": "website", "requirement": "Weekly reefer/part-load from Ooty to Chennai, ~5 tons", "status": "new"})
+
+
+def get_integration(name: str) -> dict:
+    import json
+    row = q1("SELECT data FROM integrations WHERE name = ?", (name,))
+    return json.loads(row["data"]) if row and row["data"] else {}
+
+
+def set_integration(name: str, data: dict | None) -> None:
+    import json
+    if data is None:
+        execute("DELETE FROM integrations WHERE name = ?", (name,))
+    else:
+        execute("INSERT INTO integrations (name, data, updated_at) VALUES (?,?,?) ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
+                (name, json.dumps(data), now()))

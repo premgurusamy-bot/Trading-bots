@@ -1,6 +1,7 @@
 """Transport ERP web server: REST API, AI-team scheduler, outbox dispatcher and public website."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import html
@@ -28,9 +29,9 @@ def load_env(path: Path = ROOT / ".env") -> None:
 load_env()
 
 from fastapi import Body, FastAPI, HTTPException, Request  # noqa: E402
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response  # noqa: E402
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response  # noqa: E402
 
-from . import agents, db  # noqa: E402
+from . import agents, canva, db, llm  # noqa: E402
 
 _stop = threading.Event()
 
@@ -59,7 +60,8 @@ def _token() -> str:
 @app.middleware("http")
 async def auth(request: Request, call_next):
     path = request.url.path
-    public = path in ("/", "/login", "/api/login", "/api/public/lead") or path.startswith("/site") or path.endswith(".svg")
+    public = (path in ("/", "/login", "/api/login", "/api/public/lead", "/api/ping", "/api/canva/callback", "/manifest.webmanifest", "/sw.js", "/icon.svg")
+              or path.startswith("/site") or path.endswith((".svg", ".png")))
     if PASSWORD and not public and request.cookies.get("erp") != _token():
         return JSONResponse({"detail": "login required"}, status_code=401)
     return await call_next(request)
@@ -86,8 +88,9 @@ def _table(name: str) -> str:
 def meta():
     return {
         "tables": {k: {"label": v["label"], "cols": {c: {"type": t, "options": o} for c, (t, o) in v["cols"].items()}} for k, v in db.TABLES.items()},
-        "ai_enabled": agents.ai_available(), "model": agents.MODEL, "password": bool(PASSWORD),
-        "webhook": bool(os.environ.get("OUTBOX_WEBHOOK_URL")),
+        "ai_enabled": agents.ai_available(), "providers": llm.available(), "default_provider": llm.resolve(None),
+        "models": {"claude": llm.CLAUDE_MODEL, "openai": llm.OPENAI_MODEL, "openai_image": llm.OPENAI_IMAGE_MODEL},
+        "password": bool(PASSWORD), "webhook": bool(os.environ.get("OUTBOX_WEBHOOK_URL")), "canva": canva.status(),
     }
 
 
@@ -190,7 +193,9 @@ def list_agents():
 def put_agent(key: str, data: dict = Body(...)):
     if key not in agents.ROLES:
         raise HTTPException(404)
-    for f in ("enabled", "interval_min", "mission"):
+    if data.get("provider") not in (None, "auto", *llm.PROVIDERS):
+        raise HTTPException(400, "provider must be auto, claude or openai")
+    for f in ("enabled", "interval_min", "mission", "provider"):
         if f in data:
             db.execute(f"UPDATE agents SET {f}=? WHERE key=?", (data[f], key))
     return db.q1("SELECT * FROM agents WHERE key=?", (key,))
@@ -271,10 +276,128 @@ def dispatch_outbox() -> None:
 
 
 # ----------------------------------------------------------------------------- designs & website
+@app.get("/api/designs/{did}.png")
+def design_png(did: int):
+    d = db.get("designs", did)
+    if not d or not d.get("image_path") or not Path(d["image_path"]).exists():
+        raise HTTPException(404, "no PNG for this design")
+    return FileResponse(d["image_path"], media_type="image/png")
+
+
+@app.post("/api/designs/{did}/png")
+def upload_design_png(did: int, data: dict = Body(...)):
+    """The phone/browser converts an SVG design to PNG and uploads it here (data:image/png;base64,...)."""
+    if not db.get("designs", did):
+        raise HTTPException(404)
+    url = str(data.get("data_url", ""))
+    if not url.startswith("data:image/png;base64,"):
+        raise HTTPException(400, "expected a PNG data URL")
+    png = base64.b64decode(url.split(",", 1)[1])
+    if len(png) > 15_000_000 or not png.startswith(b"\x89PNG"):
+        raise HTTPException(400, "not a valid PNG (max 15 MB)")
+    db.update("designs", did, {"image_path": agents.save_png(did, png)})
+    return db.get("designs", did)
+
+
+@app.post("/api/designs/generate")
+def generate_design(data: dict = Body(...)):
+    """Make an image with ChatGPT's image model from the owner's description."""
+    if not llm.available()["openai"]:
+        raise HTTPException(400, "Add OPENAI_API_KEY to .env to generate images")
+    prompt = str(data.get("prompt", "")).strip()
+    if not prompt:
+        raise HTTPException(400, "describe the image")
+    co = db.company()
+    out = agents.run_tool("designer", "generate_image", {"name": prompt[:60], "prompt": f"{prompt}. For {co.get('name')}, a transport company.", "kind": data.get("kind") or "social_post"})
+    return db.get("designs", out["design_id"])
+
+
+# ----------------------------------------------------------------------------- Canva
+def _canva(fn, *a):
+    try:
+        return fn(*a)
+    except canva.CanvaError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/canva/connect")
+def canva_connect():
+    return RedirectResponse(_canva(canva.auth_url))
+
+
+@app.get("/api/canva/callback", response_class=HTMLResponse)
+def canva_callback(code: str = "", state: str = "", error: str = ""):
+    if error:
+        return f"<p>Canva sign-in cancelled: {html.escape(error)}</p><p><a href='/#settings'>Back to ERP</a></p>"
+    try:
+        canva.finish_auth(code, state)
+    except canva.CanvaError as e:
+        return f"<p>{html.escape(str(e))}</p><p><a href='/#settings'>Back to ERP</a></p>"
+    return "<p>Canva connected. You can close this tab.</p><script>setTimeout(()=>location='/#settings',1200)</script>"
+
+
+@app.post("/api/canva/disconnect")
+def canva_disconnect():
+    canva.disconnect()
+    return canva.status()
+
+
+@app.get("/api/canva/designs")
+def canva_designs(query: str = ""):
+    return _canva(canva.list_designs, query)
+
+
+@app.post("/api/designs/{did}/canva")
+def send_to_canva(did: int):
+    d = db.get("designs", did)
+    if not d:
+        raise HTTPException(404)
+    if not d.get("image_path") or not Path(d["image_path"]).exists():
+        raise HTTPException(400, "This design has no PNG yet")
+    png = Path(d["image_path"]).read_bytes()
+    asset_id = _canva(canva.upload_png, png, d["name"] or f"design-{did}")
+    cd = _canva(canva.create_design, asset_id, d["name"] or f"Design {did}")
+    db.update("designs", did, {"canva_design_id": cd["id"], "canva_edit_url": cd["edit_url"]})
+    return db.get("designs", did)
+
+
+@app.post("/api/canva/import")
+def import_from_canva(data: dict = Body(...)):
+    """Export a Canva design as PNG into the ERP. Pass design_id (ERP design) or canva_design_id (any Canva design)."""
+    did = data.get("design_id")
+    cid = data.get("canva_design_id")
+    if did:
+        d = db.get("designs", int(did))
+        if not d or not d.get("canva_design_id"):
+            raise HTTPException(400, "This design was not sent to Canva")
+        cid = d["canva_design_id"]
+    if not cid:
+        raise HTTPException(400, "design_id or canva_design_id required")
+    png = _canva(canva.export_png, cid)
+    if not did:
+        did = db.insert("designs", {"name": data.get("title") or "From Canva", "kind": "social_post", "canva_design_id": cid, "created_by": "canva"})
+    db.update("designs", int(did), {"image_path": agents.save_png(int(did), png)})
+    return db.get("designs", int(did))
+
+
+# ----------------------------------------------------------------------------- Ask AI (chat)
+@app.post("/api/chat")
+def ai_chat(data: dict = Body(...)):
+    try:
+        return agents.chat(data.get("role") or "general_manager", data.get("messages") or [], data.get("provider"))
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/ping")
+def ping():
+    return {"ok": True, "app": "transport-erp"}
+
+
 @app.get("/api/designs/{did}.svg")
 def design_svg(did: int):
     d = db.get("designs", did)
-    if not d:
+    if not d or not d.get("svg"):
         raise HTTPException(404)
     return Response(d["svg"], media_type="image/svg+xml", headers={"Content-Security-Policy": "script-src 'none'"})
 
@@ -314,7 +437,22 @@ def public_lead(data: dict = Body(...)):
 # ----------------------------------------------------------------------------- UI
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    return FileResponse(STATIC / "sw.js", media_type="text/javascript")
+
+
+@app.get("/icon.svg")
+def icon():
+    return FileResponse(STATIC / "icon.svg", media_type="image/svg+xml")
 
 
 # ----------------------------------------------------------------------------- scheduler
@@ -337,7 +475,13 @@ def main():
 
     host = os.environ.get("APP_HOST", "127.0.0.1")
     port = int(os.environ.get("APP_PORT", "8100"))
-    print(f"Transport ERP on http://{host}:{port}   AI: {'ON (' + agents.MODEL + ')' if agents.ai_available() else 'OFF - rules mode (add ANTHROPIC_API_KEY to .env)'}")
+    if host not in ("127.0.0.1", "localhost") and not PASSWORD:
+        raise SystemExit("Set ERP_PASSWORD in .env before opening the ERP to phones or the network.")
+    av = llm.available()
+    print(f"Transport ERP on http://{host}:{port}")
+    print(f"  Claude: {'ON ' + llm.CLAUDE_MODEL if av['claude'] else 'off'} | ChatGPT: {'ON ' + llm.OPENAI_MODEL if av['openai'] else 'off'} | Canva: {'configured' if canva.configured() else 'off'}")
+    if not any(av.values()):
+        print("  AI is OFF - rules mode. Add ANTHROPIC_API_KEY and/or OPENAI_API_KEY to .env")
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

@@ -1,0 +1,15 @@
+{
+  "appId": "in.transporterp.app",
+  "appName": "Transport ERP",
+  "webDir": "www",
+  "appendUserAgent": "TransportERPApp",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#0f3d6e"
+  }
+}
