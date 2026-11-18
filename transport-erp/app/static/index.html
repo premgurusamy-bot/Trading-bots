@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transport ERP</title>
+<style>
+:root{--bg:#f4f6fa;--panel:#fff;--ink:#1c2333;--muted:#667085;--line:#e3e7ee;--brand:#0f3d6e;--accent:#f28c28;--ok:#12825a;--warn:#b7791f;--bad:#c53030;--chip:#eef2f8}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141c;--panel:#171e29;--ink:#e6eaf2;--muted:#9aa4b5;--line:#273142;--brand:#5aa2ff;--chip:#1f2836}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+.app{display:flex;min-height:100vh}
+nav{width:220px;background:var(--panel);border-right:1px solid var(--line);padding:14px 10px;flex-shrink:0;position:sticky;top:0;height:100vh;overflow:auto}
+nav h1{font-size:16px;margin:4px 8px 14px;color:var(--brand)}
+nav .grp{font-size:11px;text-transform:uppercase;color:var(--muted);margin:14px 8px 4px;letter-spacing:.05em}
+nav a{display:flex;justify-content:space-between;padding:7px 10px;border-radius:8px;color:var(--ink);text-decoration:none;cursor:pointer}
+nav a.on,nav a:hover{background:var(--chip)} nav a .n{background:var(--accent);color:#fff;border-radius:10px;padding:0 7px;font-size:11px}
+main{flex:1;padding:20px;min-width:0}
+h2{margin:0 0 14px;font-size:20px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+.card .v{font-size:22px;font-weight:650}.card .l{color:var(--muted);font-size:12px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{font-size:12px;color:var(--muted);font-weight:600;background:var(--chip)}
+td.long{max-width:360px;white-space:pre-wrap;word-break:break-word}
+.wrap{overflow-x:auto}
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:6px 12px;border-radius:8px;cursor:pointer}
+button.p{background:var(--brand);color:#fff;border-color:var(--brand)}button.ok{background:var(--ok);color:#fff;border-color:var(--ok)}button.bad{color:var(--bad)}
+button:disabled{opacity:.5}
+input,select,textarea{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);width:100%}
+textarea{min-height:90px}
+.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;background:var(--chip)}
+.pill.critical,.pill.error,.pill.failed,.pill.overdue,.pill.rejected{background:#fde2e2;color:#9b1c1c}.pill.warning,.pill.pending_approval,.pill.pending{background:#fdf0d5;color:#8a5a00}
+.pill.ok,.pill.paid,.pill.delivered,.pill.done,.pill.sent,.pill.published,.pill.approved,.pill.available{background:#d9f3e6;color:#0b6b46}
+.agent{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.agents{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.muted{color:var(--muted)}.small{font-size:12px}
+.modal{position:fixed;inset:0;background:#0007;display:none;align-items:flex-start;justify-content:center;padding:30px 12px;overflow:auto;z-index:9}
+.modal.on{display:flex}.modal .box{background:var(--panel);border-radius:14px;padding:18px;width:min(640px,100%)}
+.form{display:grid;grid-template-columns:1fr 1fr;gap:10px}.form label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}.form .full{grid-column:1/-1}
+.svgthumb{width:120px;height:120px;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:#fff}
+iframe{width:100%;height:75vh;border:1px solid var(--line);border-radius:12px;background:#fff}
+.menu{display:none}
+@media(max-width:760px){nav{position:fixed;left:-240px;transition:.2s;z-index:8}nav.open{left:0}.menu{display:inline-block}.form{grid-template-columns:1fr}main{padding:14px}}
+</style>
+</head>
+<body>
+<div class="app">
+<nav id="nav"></nav>
+<main><div class="bar"><button class="menu" onclick="nav.classList.toggle('open')">☰ Menu</button><span id="aiflag" class="pill"></span></div><div id="view"></div></main>
+</div>
+<div class="modal" id="modal" onclick="if(event.target===this)closeModal()"><div class="box" id="mbox"></div></div>
+<script>
+const $=s=>document.querySelector(s), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let META=null, cache={};
+async function api(path,opt={}){const r=await fetch(path,{headers:{'Content-Type':'application/json'},...opt,body:opt.body?JSON.stringify(opt.body):undefined});
+ if(r.status===401){return loginView()} if(!r.ok){const t=await r.text();alert('Error: '+t);throw new Error(t)} return r.json()}
+const money=v=>'₹ '+Number(v||0).toLocaleString('en-IN',{maximumFractionDigits:0});
+const PAGES=[
+ ['Overview',[['dashboard','Dashboard'],['ai','AI Team'],['approvals','Approvals'],['tasks','Tasks'],['alerts','Alerts'],['reports','Reports']]],
+ ['Operations',[['trips','Trips / Bookings'],['vehicles','Fleet'],['employees','Staff & Drivers'],['customers','Customers']]],
+ ['Finance',[['invoices','Invoices'],['expenses','Expenses']]],
+ ['Growth',[['leads','Leads'],['content','Content & Social'],['designs','Designs'],['website','Website']]],
+ ['System',[['settings','Settings'],['runs','AI activity log']]]];
+let page=location.hash.slice(1)||'dashboard', counts={};
+function drawNav(){nav.innerHTML='<h1>🚚 Transport ERP</h1>'+PAGES.map(([g,items])=>`<div class=grp>${g}</div>`+items.map(([k,l])=>`<a class="${k===page?'on':''}" onclick="go('${k}')">${l}${counts[k]?`<span class=n>${counts[k]}</span>`:''}</a>`).join('')).join('')}
+function go(p){page=p;location.hash=p;nav.classList.remove('open');render()}
+async function boot(){META=await api('/api/meta'); if(!META)return; aiflag.textContent=META.ai_enabled?`AI ON · ${META.model}`:'AI OFF · rules mode (add ANTHROPIC_API_KEY in .env)'; aiflag.className='pill '+(META.ai_enabled?'ok':'warning'); render(); setInterval(()=>{if(['dashboard','ai','approvals','runs'].includes(page))render(true)},15000)}
+function loginView(){view.innerHTML=`<div class=card style="max-width:360px"><h2>Login</h2><input id=pw type=password placeholder=Password><br><br><button class=p onclick="api('/api/login',{method:'POST',body:{password:pw.value}}).then(boot)">Login</button></div>`;nav.innerHTML=''}
+async function refreshCounts(){const k=(await api('/api/dashboard')).kpis;counts={approvals:k.pending_approvals,alerts:k.open_alerts,tasks:k.open_tasks,leads:k.new_leads,trips:k.trips_pending};drawNav();return k}
+async function refs(){for(const t of ['customers','vehicles','employees','trips','designs'])cache[t]=await api('/api/t/'+t);}
+function refLabel(t,id){const r=(cache[t]||[]).find(x=>x.id==id);if(!r)return id??'';return r.name||r.reg_no||(r.origin?`#${r.id} ${r.origin}→${r.destination}`:'#'+r.id)}
+async function render(quiet){const k=await refreshCounts();const f=VIEWS[page]||(()=>tableView(page));if(!quiet)view.innerHTML='<p class=muted>Loading…</p>';await f(k)}
+const VIEWS={
+ async dashboard(k){const d=await api('/api/dashboard');
+  const c=[['Revenue (month)',money(k.revenue_this_month)],['Expenses (month)',money(k.expenses_this_month)],['Profit (month)',money(k.revenue_this_month-k.expenses_this_month)],['Receivables',money(k.receivables_outstanding)],['Overdue',money(k.overdue_amount)],['Trips pending',k.trips_pending],['Trips active',k.trips_active],['Vehicles free',`${k.vehicles_available} / ${k.vehicles_total}`],['Active drivers',k.drivers_active],['New leads',k.new_leads]];
+  view.innerHTML=`<h2>Dashboard</h2><div class=cards>${c.map(([l,v])=>`<div class=card><div class=l>${l}</div><div class=v>${v}</div></div>`).join('')}</div>
+  <div class=grid2><div><h3>Alerts</h3>${d.alerts.length?d.alerts.map(a=>`<div class=card style="margin-bottom:8px;display:flex;gap:10px;align-items:flex-start"><div style="flex:1"><span class="pill ${a.level}">${a.level}</span> <b>${esc(a.category)}</b> ${esc(a.message)}</div><button onclick="resolveAlert(${a.id})">Resolve</button></div>`).join(''):'<p class=muted>No open alerts 🎉</p>'}</div>
+  <div><h3>What the AI team did</h3>${d.runs.map(r=>`<div class=card style="margin-bottom:8px"><b>${esc(agentName(r.agent_key))}</b> <span class="pill ${r.status}">${r.status==='running'?'running…':r.mode}</span> <span class="muted small">${esc(r.started_at)}</span><div class="small" style="white-space:pre-wrap">${esc((r.summary||'').slice(0,400))}</div></div>`).join('')||'<p class=muted>No runs yet.</p>'}</div></div>`},
+ async ai(){const a=await api('/api/agents');window._agents=a;
+  view.innerHTML=`<h2>AI Team</h2><div class=bar><button class=p onclick="api('/api/agents/run-all',{method:'POST'}).then(()=>setTimeout(render,1500))">▶ Run whole team now</button><span class="muted small">Each role runs automatically on its schedule. Automatic rules run even without an API key; with a key, Claude reasons and acts as the role.</span></div>
+  <div class=agents>${a.map(x=>`<div class=agent><div><b>${esc(x.name)}</b> <span class="pill ${x.enabled?'ok':''}">${x.enabled?'auto':'paused'}</span> ${x.open_tasks?`<span class="pill warning">${x.open_tasks} tasks</span>`:''}</div>
+   <div class="small muted">${esc(x.mission)}</div>
+   <div class=small>Every <b>${fmtMin(x.interval_min)}</b> · last: ${esc(x.last_run||'never')} · next: ${esc(x.next_run||'-')}</div>
+   ${x.last?`<div class=small style="white-space:pre-wrap;border-left:3px solid var(--line);padding-left:8px">${esc((x.last.summary||'').slice(0,300))}</div>`:''}
+   <div class=bar style="margin:0"><button class=p onclick="runAgent('${x.key}')">Run now</button><button onclick="editAgent('${x.key}')">Settings</button><button onclick="go('runs');window._runFilter='${x.key}'">History</button></div></div>`).join('')}</div>`},
+ async approvals(){const o=await api('/api/t/outbox?status=pending_approval'), c=await api('/api/t/content?status=pending_approval'); await refs();
+  view.innerHTML=`<h2>Approvals</h2><p class=muted>Everything that leaves the company waits here unless you switch on auto-send / auto-publish in Settings.</p>
+  <h3>Content to publish (${c.length})</h3>${c.map(x=>`<div class=card style="margin-bottom:8px;display:flex;gap:12px">${x.design_id?`<img class=svgthumb src="/api/designs/${x.design_id}.svg">`:''}<div style="flex:1"><b>${esc(x.title)}</b> <span class=pill>${esc(x.platform)}</span> <span class="muted small">by ${esc(x.created_by)} · for ${esc(x.scheduled_for||'now')}</span><div style="white-space:pre-wrap">${esc(x.body)}</div><div class=muted>${esc(x.hashtags||'')}</div>
+   <div class=bar style="margin:8px 0 0"><button class=ok onclick="act('/api/content/${x.id}/approve')">Approve</button><button onclick="editRow('content',${x.id})">Edit</button><button class=bad onclick="act('/api/content/${x.id}/reject')">Reject</button></div></div></div>`).join('')||'<p class=muted>Nothing waiting.</p>'}
+  <h3>Messages to send (${o.length})</h3>${o.map(x=>`<div class=card style="margin-bottom:8px"><span class=pill>${esc(x.channel)}</span> to <b>${esc(x.recipient)}</b> <span class="muted small">by ${esc(x.created_by)}</span><div><b>${esc(x.subject||'')}</b></div><div style="white-space:pre-wrap">${esc(x.body)}</div>
+   <div class=bar style="margin:8px 0 0"><button class=ok onclick="act('/api/outbox/${x.id}/approve')">Approve & send</button><button onclick="editRow('outbox',${x.id})">Edit</button><button class=bad onclick="act('/api/outbox/${x.id}/reject')">Reject</button></div></div>`).join('')||'<p class=muted>Nothing waiting.</p>'}
+  ${META.webhook?'':'<p class="small muted">No OUTBOX_WEBHOOK_URL set: approved items stay in the Outbox (status "approved") for you to send manually. Connect Zapier/Make/n8n to send automatically.</p>'}`},
+ async designs(){const d=await api('/api/t/designs');view.innerHTML=`<h2>Designs</h2><div class=bar><button class=p onclick="runAgent('designer')">Ask AI Designer for new designs</button></div><div class=agents>${d.map(x=>`<div class=agent><img style="width:100%;aspect-ratio:1;object-fit:contain;background:#fff;border-radius:8px" src="/api/designs/${x.id}.svg"><b>${esc(x.name)}</b><span class="small muted">${esc(x.kind)} · ${esc(x.created_by)}</span><div class=bar><a class=btn href="/api/designs/${x.id}.svg" download="design-${x.id}.svg">Download</a><button class=bad onclick="delRow('designs',${x.id})">Delete</button></div></div>`).join('')||'<p class=muted>No designs yet.</p>'}</div>`},
+ async website(){view.innerHTML=`<h2>Website</h2><div class=bar><a class=btn href="/site" target=_blank>Open website ↗</a><button class=p onclick="runAgent('website_designer')">Ask AI Website Designer to improve it</button><button onclick="go('website_sections')">Edit sections</button></div><iframe src="/site"></iframe>`},
+ async settings(){const c=await api('/api/company');const f=['name','tagline','phone','email','address','city','services','about','gst_rate','service_interval_km'];
+  view.innerHTML=`<h2>Settings</h2><div class=card><div class=form>${f.map(k=>`<label class="${['about','services'].includes(k)?'full':''}">${k.replace(/_/g,' ')}${['about'].includes(k)?`<textarea id="c_${k}">${esc(c[k])}</textarea>`:`<input id="c_${k}" value="${esc(c[k])}">`}</label>`).join('')}
+  <label class=full><span><input type=checkbox id=c_auto_publish style="width:auto" ${c.auto_publish?'checked':''}> Fully automatic social media: publish AI content without my approval</span></label>
+  <label class=full><span><input type=checkbox id=c_auto_send_messages style="width:auto" ${c.auto_send_messages?'checked':''}> Fully automatic messages: send AI emails / WhatsApp / SMS to customers without my approval</span></label></div><br>
+  <button class=p onclick="saveCompany()">Save</button></div>
+  <div class=card style="margin-top:14px"><b>AI status:</b> ${META.ai_enabled?'ON – '+esc(META.model):'OFF – put your Claude API key in the <code>.env</code> file (ANTHROPIC_API_KEY=...) and restart.'}<br><b>Delivery webhook:</b> ${META.webhook?'connected':'not set (OUTBOX_WEBHOOK_URL in .env)'}<br><b>Password:</b> ${META.password?'on':'off (set ERP_PASSWORD in .env)'}</div>`},
+ async runs(){const f=window._runFilter;window._runFilter=null;const r=await api('/api/runs'+(f?'?agent='+f:''));
+  view.innerHTML=`<h2>AI activity log ${f?'– '+esc(agentName(f)):''}</h2><div class=wrap><table><tr><th>When</th><th>Role</th><th>Mode</th><th>Status</th><th>Summary</th><th>Actions</th><th>Tokens</th></tr>${r.map(x=>`<tr><td class=small>${esc(x.started_at)}</td><td>${esc(agentName(x.agent_key))}</td><td>${esc(x.mode||'')}</td><td><span class="pill ${x.status}">${esc(x.status)}</span></td><td class=long>${esc(x.summary)}</td><td class="long small">${esc((JSON.parse(x.actions||'[]')).join('\n'))}</td><td class=small>${x.tokens_in||0}/${x.tokens_out||0}</td></tr>`).join('')}</table></div>`},
+};
+const QUICK={trips:'pending',invoices:null};
+async function tableView(t){if(!META.tables[t]){view.innerHTML='Unknown page';return}await refs();const spec=META.tables[t],rows=await api('/api/t/'+t),cols=Object.keys(spec.cols).filter(c=>!['svg','html','dedupe_key'].includes(c));
+ view.innerHTML=`<h2>${esc(spec.label)}</h2><div class=bar><button class=p onclick="editRow('${t}')">+ Add</button><input placeholder="Search…" style="max-width:240px" oninput="filterRows(this.value)"><span class="muted small">${rows.length} records</span></div>
+ <div class=wrap><table id=tbl><tr><th>#</th>${cols.map(c=>`<th>${c.replace(/_id$/,'').replace(/_/g,' ')}</th>`).join('')}<th></th></tr>${rows.map(r=>`<tr><td>${r.id}</td>${cols.map(c=>cell(spec.cols[c],r[c],c)).join('')}<td style="white-space:nowrap">${rowActions(t,r)}<button onclick="editRow('${t}',${r.id})">Edit</button> <button class=bad onclick="delRow('${t}',${r.id})">✕</button></td></tr>`).join('')}</table></div>`;window._rows=rows}
+function cell(s,v,c){if(s.type.startsWith('ref:'))return`<td>${esc(refLabel(s.type.slice(4),v))}</td>`;if(s.type==='select'&&v)return`<td><span class="pill ${esc(v)}">${esc(v)}</span></td>`;
+ if(['amount','total','freight_amount','tax','monthly_salary'].includes(c)&&v!=null)return`<td>${money(v)}</td>`;return`<td class="${s.type==='longtext'?'long':''}">${esc(s.type==='longtext'?String(v??'').slice(0,300):v)}</td>`}
+function rowActions(t,r){if(t==='trips'){const n={assigned:'in_transit',in_transit:'delivered'}[r.status];return n?`<button class=ok onclick="setField('trips',${r.id},{status:'${n}'})">Mark ${n.replace('_',' ')}</button> `:''}
+ if(t==='invoices'&&r.status!=='paid')return`<button class=ok onclick="setField('invoices',${r.id},{status:'paid',paid_date:new Date().toISOString().slice(0,10)})">Paid</button> `;
+ if(t==='alerts'&&!r.resolved)return`<button onclick="resolveAlert(${r.id})">Resolve</button> `;if(t==='tasks'&&r.status!=='done')return`<button class=ok onclick="setField('tasks',${r.id},{status:'done'})">Done</button> `;return''}
+function filterRows(q){q=q.toLowerCase();document.querySelectorAll('#tbl tr').forEach((tr,i)=>{if(i)tr.style.display=tr.textContent.toLowerCase().includes(q)?'':'none'})}
+async function editRow(t,id){await refs();const spec=META.tables[t],r=id?(await api('/api/t/'+t)).find(x=>x.id===id):{};
+ mbox.innerHTML=`<h3>${id?'Edit':'Add'} – ${esc(spec.label)}</h3><div class=form>${Object.entries(spec.cols).map(([c,s])=>`<label class="${s.type==='longtext'?'full':''}">${c.replace(/_/g,' ')}${input(c,s,r[c])}</label>`).join('')}</div><br><button class=p onclick="saveRow('${t}',${id||0})">Save</button> <button onclick="closeModal()">Cancel</button>`;modal.classList.add('on')}
+function input(c,s,v){v=v??'';if(s.type==='select')return`<select id="f_${c}"><option value=""></option>${s.options.map(o=>`<option ${o==v?'selected':''}>${o}</option>`).join('')}</select>`;
+ if(s.type.startsWith('ref:')){const t=s.type.slice(4);return`<select id="f_${c}"><option value=""></option>${(cache[t]||[]).map(o=>`<option value="${o.id}" ${o.id==v?'selected':''}>${esc(refLabel(t,o.id))}</option>`).join('')}</select>`}
+ if(s.type==='longtext')return`<textarea id="f_${c}">${esc(v)}</textarea>`;const ty={int:'number',real:'number',date:'date'}[s.type]||'text';return`<input id="f_${c}" type="${ty}" step="any" value="${esc(v)}">`}
+async function saveRow(t,id){const d={};for(const c of Object.keys(META.tables[t].cols))d[c]=document.getElementById('f_'+c).value;await api(`/api/t/${t}${id?'/'+id:''}`,{method:id?'PUT':'POST',body:d});closeModal();render()}
+async function setField(t,id,d){await api(`/api/t/${t}/${id}`,{method:'PUT',body:d});render()}
+async function delRow(t,id){if(confirm('Delete this record?')){await api(`/api/t/${t}/${id}`,{method:'DELETE'});render()}}
+const resolveAlert=id=>setField('alerts',id,{resolved:1});
+async function act(p){await api(p,{method:'POST'});render()}
+function closeModal(){modal.classList.remove('on')}
+async function runAgent(k){await api(`/api/agents/${k}/run`,{method:'POST'});toast('Started '+agentName(k)+' – results appear in a few seconds');setTimeout(()=>render(true),2500)}
+function toast(m){const d=document.createElement('div');d.textContent=m;d.style.cssText='position:fixed;bottom:16px;right:16px;background:var(--brand);color:#fff;padding:10px 14px;border-radius:10px;z-index:10';document.body.append(d);setTimeout(()=>d.remove(),3500)}
+function agentName(k){return(window._agents||[]).find(a=>a.key===k)?.name||String(k).replace(/_/g,' ')}
+const fmtMin=m=>m>=1440?(m/1440)+' day(s)':m>=60?(m/60)+' h':m+' min';
+function editAgent(k){const a=window._agents.find(x=>x.key===k);mbox.innerHTML=`<h3>${esc(a.name)}</h3><div class=form><label class=full>Mission (what this AI role should do)<textarea id=a_m>${esc(a.mission)}</textarea></label><label>Run every (minutes)<input id=a_i type=number value="${a.interval_min}"></label><label>Automatic<select id=a_e><option value=1 ${a.enabled?'selected':''}>on</option><option value=0 ${a.enabled?'':'selected'}>paused</option></select></label></div><br><button class=p onclick="api('/api/agents/${k}',{method:'PUT',body:{mission:a_m.value,interval_min:+a_i.value,enabled:+a_e.value}}).then(()=>{closeModal();render()})">Save</button>`;modal.classList.add('on')}
+async function saveCompany(){const d={};for(const k of ['name','tagline','phone','email','address','city','services','about','gst_rate','service_interval_km'])d[k]=document.getElementById('c_'+k).value;d.auto_publish=c_auto_publish.checked?1:0;d.auto_send_messages=c_auto_send_messages.checked?1:0;await api('/api/company',{method:'PUT',body:d});toast('Saved')}
+fetch('/api/agents').then(r=>r.ok&&r.json()).then(a=>{window._agents=a||[]});
+window.onhashchange=()=>{const p=location.hash.slice(1);if(p&&p!==page){page=p;render()}};
+boot();
+</script>
+</body>
+</html>
